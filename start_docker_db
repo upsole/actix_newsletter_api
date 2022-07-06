@@ -1,0 +1,5 @@
+#!/bin/bash
+docker-compose up -d &&
+echo "Waiting for Postgres" && sleep 5 &&
+diesel setup &&
+diesel migration run
