@@ -104,6 +104,16 @@ fn list_accounts(conn: &DBPooledConnection) -> Result<Accounts, diesel::result::
     })
 }
 
+fn create_account(input_account: web::Json<AccountRequest>, conn: &DBPooledConnection) -> Result<Account, diesel::result::Error> {
+    use crate::schema::account::dsl::*;
+    let new_account = input_account.to_account_db();
+    let _ = diesel::insert_into(account)
+        .values(&new_account)
+        .execute(conn)
+        .expect("Insert failed");
+    Ok(new_account.to_account())
+}
+
 pub async fn list(pool: web::Data<DBPool>) -> HttpResponse {
     let conn = pool.get().expect("Could not connect to DB");
     let accounts = web::block(move || list_accounts(&conn)).await.unwrap().unwrap();
@@ -111,13 +121,14 @@ pub async fn list(pool: web::Data<DBPool>) -> HttpResponse {
     HttpResponse::Ok().content_type("application/json").json(accounts)
 }
 
+
 // TODO Error Handling for Already in use email
-pub async fn post_account(input_account: web::Json<AccountRequest>) -> HttpResponse {
-    let conn = init_connection();
-    let new_account = input_account.to_account_db();
-    diesel::insert_into(account::table)
-        .values(&new_account)
-        .execute(&conn)
-        .expect("Insert failed");
-    HttpResponse::Ok().json(new_account.to_account())
+pub async fn create(input_account: web::Json<AccountRequest>, pool: web::Data<DBPool>) -> HttpResponse {
+    let conn  = pool.get().expect("Could not connect to DB");
+    let new_acct = web::block(move || create_account(input_account, &conn)).await.unwrap();
+
+    match new_acct {
+        Ok(new_acct) => HttpResponse::Created().content_type("application/json").json(new_acct),
+        _ => HttpResponse::NoContent().await.unwrap(),
+    }
 }
