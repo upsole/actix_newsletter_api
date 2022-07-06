@@ -1,0 +1,9 @@
+-- Your SQL goes here
+-- CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE TABLE account (
+  id UUID PRIMARY KEY, 
+  subscribed_at TIMESTAMP NOT NULL,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  name VARCHAR(25) NOT NULL,
+  level INTEGER NOT NULL
+)
