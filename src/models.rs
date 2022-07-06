@@ -2,14 +2,13 @@ use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::{Insertable, Queryable};
 use dotenv::dotenv;
-use std::env;
 
 use actix_web::{web, HttpResponse};
 
 use serde::{Deserialize, Serialize};
 
 use crate::schema::account;
-// use super::schema::account::dsl::*;
+use crate::{DBPool, DBPooledConnection};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use uuid::Uuid;
@@ -31,7 +30,7 @@ pub type Accounts = Response<Account>;
 pub fn init_connection() -> PgConnection {
     dotenv().ok();
 
-    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL not set in .env");
+    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL not set in .env");
     // PgConnection::establish(&db_url).expect("Error connection to Postgres")
     PgConnection::establish(&db_url).expect("Error connecting to Postgres")
 }
@@ -93,20 +92,26 @@ impl AccountRequest {
     }
 }
 
-pub async fn list_accounts() -> HttpResponse {
+fn list_accounts(conn: &DBPooledConnection) -> Result<Accounts, diesel::result::Error> {
     use super::schema::account::dsl::*;
-    let conn = init_connection();
-    // let accounts = account.load::<AccountDB>(&conn).expect("Failed to query list of accounts");
-    let mut _accounts_query = account.load::<AccountDB>(&conn).unwrap();
-
-    let accounts = Accounts {
-        results: _accounts_query.into_iter().map(|a| a.to_account()).collect::<Vec<Account>>(),
+    let _accounts_query = match account.load::<AccountDB>(conn)
+    { 
+            Ok(acts) => acts, 
+            Err(_) => vec![],
     };
-
-    HttpResponse::Ok().json(accounts)
+    Ok(Accounts {
+        results: _accounts_query.into_iter().map(|a| a.to_account()).collect::<Vec<Account>>()
+    })
 }
 
-// TODO Error Handlign for Already in use email
+pub async fn list(pool: web::Data<DBPool>) -> HttpResponse {
+    let conn = pool.get().expect("Could not connect to DB");
+    let accounts = web::block(move || list_accounts(&conn)).await.unwrap().unwrap();
+
+    HttpResponse::Ok().content_type("application/json").json(accounts)
+}
+
+// TODO Error Handling for Already in use email
 pub async fn post_account(input_account: web::Json<AccountRequest>) -> HttpResponse {
     let conn = init_connection();
     let new_account = input_account.to_account_db();
