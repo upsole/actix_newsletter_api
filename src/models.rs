@@ -13,7 +13,6 @@ use crate::{DBPool, DBPooledConnection};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use uuid::Uuid;
 
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Response<T> {
     pub results: Vec<T>,
@@ -94,17 +93,22 @@ impl AccountRequest {
 
 fn list_accounts(conn: &DBPooledConnection) -> Result<Accounts, diesel::result::Error> {
     use super::schema::account::dsl::*;
-    let _accounts_query = match account.load::<AccountDB>(conn)
-    { 
-            Ok(acts) => acts, 
-            Err(_) => vec![],
+    let _accounts_query = match account.load::<AccountDB>(conn) {
+        Ok(acts) => acts,
+        Err(_) => vec![],
     };
     Ok(Accounts {
-        results: _accounts_query.into_iter().map(|a| a.to_account()).collect::<Vec<Account>>()
+        results: _accounts_query
+            .into_iter()
+            .map(|a| a.to_account())
+            .collect::<Vec<Account>>(),
     })
 }
 
-fn create_account(input_account: web::Json<AccountRequest>, conn: &DBPooledConnection) -> Result<Account, diesel::result::Error> {
+fn create_account(
+    input_account: web::Json<AccountRequest>,
+    conn: &DBPooledConnection,
+) -> Result<Account, diesel::result::Error> {
     use crate::schema::account::dsl::*;
     let new_account = input_account.to_account_db();
     let _ = diesel::insert_into(account)
@@ -114,21 +118,51 @@ fn create_account(input_account: web::Json<AccountRequest>, conn: &DBPooledConne
     Ok(new_account.to_account())
 }
 
+#[tracing::instrument(
+    name = "Querying and listing subscribers",
+    skip(pool),
+    fields()
+)]
 pub async fn list(pool: web::Data<DBPool>) -> HttpResponse {
     let conn = pool.get().expect("Could not connect to DB");
-    let accounts = web::block(move || list_accounts(&conn)).await.unwrap().unwrap();
+    let accounts = web::block(move || list_accounts(&conn))
+        .await
+        .unwrap()
+        .unwrap();
 
-    HttpResponse::Ok().content_type("application/json").json(accounts)
+    HttpResponse::Ok()
+        .content_type("application/json")
+        .json(accounts)
 }
 
-
 // TODO Error Handling for Already in use email
-pub async fn create(input_account: web::Json<AccountRequest>, pool: web::Data<DBPool>) -> HttpResponse {
-    let conn  = pool.get().expect("Could not connect to DB");
-    let new_acct = web::block(move || create_account(input_account, &conn)).await.unwrap();
+#[tracing::instrument(
+    name = "Adding a new subscriber",
+    skip(pool),
+    fields(
+        subscriber_email = %input_account.email,
+        subscriber_name = %input_account.name
+    )
+)]
+pub async fn create(
+    input_account: web::Json<AccountRequest>,
+    pool: web::Data<DBPool>,
+) -> HttpResponse {
+    let conn = pool.get().expect("Could not connect to DB");
+    let new_acct = web::block(move || create_account(input_account, &conn))
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to execute insertion {:?}", e);
+        });
 
     match new_acct {
-        Ok(new_acct) => HttpResponse::Created().content_type("application/json").json(new_acct),
-        _ => HttpResponse::NoContent().await.unwrap(),
+        Ok(new_acct) => HttpResponse::Created()
+            .content_type("application/json")
+            // TODO fix
+            .json(new_acct.unwrap()),
+        Err(e) => {
+            tracing::error!("Failed to execute insertion {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        } 
     }
 }
