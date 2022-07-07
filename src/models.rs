@@ -5,7 +5,7 @@ use actix_web::{web, HttpResponse};
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{InvalidNameError, ParsedAccount, SanitizedName};
+use crate::domain::{ParseError, ParsedAccount, SanitizedName, SanitizedEmail};
 use crate::schema::account;
 use crate::{DBPool, DBPooledConnection};
 
@@ -89,17 +89,21 @@ impl AccountRequest {
             id: Uuid::new_v4(),
         }
     }
-    pub fn to_parsed_account(&self) -> Result<ParsedAccount, InvalidNameError> {
+    pub fn to_parsed_account(&self) -> Result<ParsedAccount, ParseError> {
         let san_name = SanitizedName::parse(self.name.clone());
+        let san_email = SanitizedEmail::parse(self.email.clone());
         match san_name {
             Ok(s) => {
                 return Ok(ParsedAccount {
                     name: s,
-                    email: self.email.clone(),
+                    email: match san_email {
+                        Ok(s) => s,
+                        Err(_) => return Err(ParseError),
+                    },
                     level: self.level,
                 })
             }
-            Err(_) => return Err(InvalidNameError),
+            Err(_) => return Err(ParseError),
         };
     }
 }
@@ -161,7 +165,7 @@ pub async fn create(
     let parsed_account = match parsed_account {
         Ok(act) => act,
         Err(_) => {
-            tracing::error!("Invalid name in request");
+            tracing::error!("Invalid payload in request");
             return HttpResponse::BadRequest().finish();
         }
     };

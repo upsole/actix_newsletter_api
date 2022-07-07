@@ -1,21 +1,23 @@
 use crate::models::AccountDB;
 use uuid::Uuid;
 use chrono::Utc;
+use validator::validate_email;
 
 use std::fmt;
 
 pub struct SanitizedName(String);
-pub struct InvalidNameError;
+#[derive(Debug)]
+pub struct ParseError;
 
 impl SanitizedName {
-    pub fn parse(s: String) -> Result<SanitizedName, InvalidNameError> {
+    pub fn parse(s: String) -> Result<SanitizedName, ParseError> {
         let is_empty = s.trim().is_empty();
         let is_too_long = s.len() > 256;
         let forbidden_characters = ['/', '(', ')', '"', '<', '>', '\\', '{', '}'];
         let contains_forbidden_characters = s.chars().any(|c| forbidden_characters.contains(&c));
 
         if is_empty || is_too_long || contains_forbidden_characters {
-            return Err(InvalidNameError)
+            return Err(ParseError)
         } else {
             Ok(Self(s))
         }
@@ -28,8 +30,35 @@ impl fmt::Display for SanitizedName {
     }
 }
 
+pub struct SanitizedEmail(String);
+
+impl SanitizedEmail {
+    pub fn parse(s: String) -> Result<SanitizedEmail, ParseError> {
+        let is_empty = s.trim().is_empty();
+        let is_too_long = s.len() > 256;
+        let forbidden_characters = ['/', '(', ')', '"', '<', '>', '\\', '{', '}'];
+        let contains_forbidden_characters = s.chars().any(|c| forbidden_characters.contains(&c));
+        // TODO Regex email validation
+
+        if is_empty || is_too_long || contains_forbidden_characters ||!validate_email(&s) {
+            return Err(ParseError)
+        } else {
+            Ok(Self(s))
+        }
+
+    }
+}
+
+impl fmt::Display for SanitizedEmail {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+
+
 pub struct ParsedAccount {
-    pub email: String,
+    pub email: SanitizedEmail,
     pub name: SanitizedName,
     pub level: i32,
 }
@@ -37,8 +66,7 @@ pub struct ParsedAccount {
 impl ParsedAccount {
     pub fn to_account_db(&self) -> AccountDB {
         AccountDB {
-            email: self.email.clone(),
-            // TODO figure out SanName -> String
+            email: self.email.to_string(),
             name: self.name.to_string(),
             level: self.level,
             subscribed_at: Utc::now().naive_utc(),

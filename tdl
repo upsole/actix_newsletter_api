@@ -1,5 +1,4 @@
 extras {
   metadata 
-  regex validation of email
-  secrecy crate
+  secrecy crate + tests (quickcheck crate)
 }
