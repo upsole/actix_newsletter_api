@@ -5,6 +5,7 @@ extern crate dotenv;
 pub mod schema;
 pub mod models; 
 pub mod telemetry;
+pub mod domain;
 
 use diesel::r2d2::ConnectionManager;
 use diesel::PgConnection;

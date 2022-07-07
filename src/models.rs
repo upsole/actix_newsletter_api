@@ -1,12 +1,11 @@
-use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::{Insertable, Queryable};
-use dotenv::dotenv;
 
 use actix_web::{web, HttpResponse};
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::{InvalidNameError, ParsedAccount, SanitizedName};
 use crate::schema::account;
 use crate::{DBPool, DBPooledConnection};
 
@@ -26,12 +25,13 @@ impl<T> Response<T> {
 
 pub type Accounts = Response<Account>;
 
-pub fn init_connection() -> PgConnection {
-    dotenv().ok();
+pub fn is_valid_name(s: &str) -> bool {
+    let is_empty = s.trim().is_empty();
+    let is_too_long = s.len() > 256;
+    let forbidden_characters = ['/', '(', ')', '"', '<', '>', '\\', '{', '}'];
+    let contains_forbidden_characters = s.chars().any(|c| forbidden_characters.contains(&c));
 
-    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL not set in .env");
-    // PgConnection::establish(&db_url).expect("Error connection to Postgres")
-    PgConnection::establish(&db_url).expect("Error connecting to Postgres")
+    !(is_empty || is_too_long || contains_forbidden_characters)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -89,6 +89,19 @@ impl AccountRequest {
             id: Uuid::new_v4(),
         }
     }
+    pub fn to_parsed_account(&self) -> Result<ParsedAccount, InvalidNameError> {
+        let san_name = SanitizedName::parse(self.name.clone());
+        match san_name {
+            Ok(s) => {
+                return Ok(ParsedAccount {
+                    name: s,
+                    email: self.email.clone(),
+                    level: self.level,
+                })
+            }
+            Err(_) => return Err(InvalidNameError),
+        };
+    }
 }
 
 fn list_accounts(conn: &DBPooledConnection) -> Result<Accounts, diesel::result::Error> {
@@ -106,7 +119,7 @@ fn list_accounts(conn: &DBPooledConnection) -> Result<Accounts, diesel::result::
 }
 
 fn create_account(
-    input_account: web::Json<AccountRequest>,
+    input_account: ParsedAccount,
     conn: &DBPooledConnection,
 ) -> Result<Account, diesel::result::Error> {
     use crate::schema::account::dsl::*;
@@ -118,11 +131,7 @@ fn create_account(
     Ok(new_account.to_account())
 }
 
-#[tracing::instrument(
-    name = "Querying and listing subscribers",
-    skip(pool),
-    fields()
-)]
+#[tracing::instrument(name = "Querying and listing subscribers", skip(pool), fields())]
 pub async fn list(pool: web::Data<DBPool>) -> HttpResponse {
     let conn = pool.get().expect("Could not connect to DB");
     let accounts = web::block(move || list_accounts(&conn))
@@ -148,8 +157,17 @@ pub async fn create(
     input_account: web::Json<AccountRequest>,
     pool: web::Data<DBPool>,
 ) -> HttpResponse {
+    let parsed_account = input_account.to_parsed_account();
+    let parsed_account = match parsed_account {
+        Ok(act) => act,
+        Err(_) => {
+            tracing::error!("Invalid name in request");
+            return HttpResponse::BadRequest().finish();
+        }
+    };
+
     let conn = pool.get().expect("Could not connect to DB");
-    let new_acct = web::block(move || create_account(input_account, &conn))
+    let new_acct = web::block(move || create_account(parsed_account, &conn))
         .await
         .map_err(|e| {
             tracing::error!("Failed to execute insertion {:?}", e);
@@ -163,6 +181,6 @@ pub async fn create(
         Err(e) => {
             tracing::error!("Failed to execute insertion {:?}", e);
             HttpResponse::InternalServerError().finish()
-        } 
+        }
     }
 }
