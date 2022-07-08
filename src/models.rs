@@ -90,21 +90,22 @@ impl AccountRequest {
         }
     }
     pub fn to_parsed_account(&self) -> Result<ParsedAccount, ParseError> {
-        let san_name = SanitizedName::parse(self.name.clone());
-        let san_email = SanitizedEmail::parse(self.email.clone());
-        match san_name {
-            Ok(s) => {
-                return Ok(ParsedAccount {
-                    name: s,
-                    email: match san_email {
-                        Ok(s) => s,
-                        Err(_) => return Err(ParseError),
-                    },
-                    level: self.level,
-                })
-            }
-            Err(_) => return Err(ParseError),
-        };
+        let san_name = SanitizedName::parse(self.name.clone())?;
+        let san_email = SanitizedEmail::parse(self.email.clone())?;
+        Ok(ParsedAccount {
+            name: san_name,
+            email: san_email,
+            level: self.level
+        })
+    }
+}
+
+impl TryFrom<web::Json<AccountRequest>> for ParsedAccount {
+    type Error = ParseError;
+    fn try_from(value: web::Json<AccountRequest>) -> Result<Self, Self::Error> {
+        let name = SanitizedName::parse(value.name.clone())?;
+        let email = SanitizedEmail::parse(value.email.clone())?;
+        Ok(Self {name, email, level: value.level})
     }
 }
 
@@ -161,13 +162,17 @@ pub async fn create(
     input_account: web::Json<AccountRequest>,
     pool: web::Data<DBPool>,
 ) -> HttpResponse {
-    let parsed_account = input_account.to_parsed_account();
-    let parsed_account = match parsed_account {
-        Ok(act) => act,
-        Err(_) => {
-            tracing::error!("Invalid payload in request");
-            return HttpResponse::BadRequest().finish();
-        }
+    // let parsed_account = input_account.to_parsed_account();
+    // let parsed_account = match parsed_account {
+    //     Ok(act) => act,
+    //     Err(_) => {
+    //         tracing::error!("Invalid payload in request");
+    //         return HttpResponse::BadRequest().finish();
+    //     }
+    // };
+    let parsed_account = match input_account.try_into() {
+        Ok(values) => values,
+        Err(_) => return HttpResponse::BadRequest().finish(),
     };
 
     let conn = pool.get().expect("Could not connect to DB");
