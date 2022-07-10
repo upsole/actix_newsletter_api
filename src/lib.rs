@@ -6,6 +6,7 @@ pub mod schema;
 pub mod models; 
 pub mod telemetry;
 pub mod domain;
+pub mod email;
 
 use diesel::r2d2::ConnectionManager;
 use diesel::PgConnection;

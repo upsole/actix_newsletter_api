@@ -30,7 +30,14 @@ impl fmt::Display for SanitizedName {
     }
 }
 
+#[derive(Clone)]
 pub struct SanitizedEmail(String);
+
+impl AsRef<str> for SanitizedEmail {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
 
 impl SanitizedEmail {
     pub fn parse(s: String) -> Result<SanitizedEmail, ParseError> {

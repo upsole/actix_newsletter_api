@@ -162,14 +162,6 @@ pub async fn create(
     input_account: web::Json<AccountRequest>,
     pool: web::Data<DBPool>,
 ) -> HttpResponse {
-    // let parsed_account = input_account.to_parsed_account();
-    // let parsed_account = match parsed_account {
-    //     Ok(act) => act,
-    //     Err(_) => {
-    //         tracing::error!("Invalid payload in request");
-    //         return HttpResponse::BadRequest().finish();
-    //     }
-    // };
     let parsed_account = match input_account.try_into() {
         Ok(values) => values,
         Err(_) => return HttpResponse::BadRequest().finish(),
