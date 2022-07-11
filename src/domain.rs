@@ -62,8 +62,6 @@ impl fmt::Display for SanitizedEmail {
     }
 }
 
-
-
 pub struct ParsedAccount {
     pub email: SanitizedEmail,
     pub name: SanitizedName,

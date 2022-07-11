@@ -44,6 +44,7 @@ async fn main() -> std::io::Result<()> {
             .route("/ok", web::get().to(ok))
             .route("/subscriptions", web::get().to(models::list))
             .route("/subscriptions", web::post().to(models::create))
+            .route("/confirm/{req_token}", web::post().to(models::confirm))
     })
     .bind("127.0.0.1:4000")?
     .run()

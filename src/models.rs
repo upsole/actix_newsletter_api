@@ -1,12 +1,13 @@
 use diesel::prelude::*;
-use diesel::{Insertable, Queryable};
+use diesel::{AsChangeset, Identifiable, Insertable, Queryable};
 
 use actix_web::{web, HttpResponse};
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{ParseError, ParsedAccount, SanitizedEmail, SanitizedName};
 use crate::schema::account;
+
+use crate::domain::{ParseError, ParsedAccount, SanitizedEmail, SanitizedName};
 use crate::{DBPool, DBPooledConnection};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -56,7 +57,7 @@ impl Account {
 }
 
 // TODO BUG
-#[derive(Deserialize, Queryable, Insertable)]
+#[derive(Deserialize, Queryable, Insertable, Identifiable, AsChangeset)]
 #[table_name = "account"]
 pub struct AccountDB {
     pub id: Uuid,
@@ -100,10 +101,7 @@ impl TryFrom<web::Json<AccountRequest>> for ParsedAccount {
     fn try_from(value: web::Json<AccountRequest>) -> Result<Self, Self::Error> {
         let name = SanitizedName::parse(value.name.clone())?;
         let email = SanitizedEmail::parse(value.email.clone())?;
-        Ok(Self {
-            name,
-            email,
-        })
+        Ok(Self { name, email })
     }
 }
 
@@ -132,6 +130,42 @@ fn create_account(
         .execute(conn)
         .expect("Insert failed");
     Ok(new_account)
+}
+
+#[derive(Serialize)]
+struct ActivateResponse {
+    message: String,
+}
+struct ActivateError;
+
+fn activate_account(
+    req_token: &str,
+    conn: &DBPooledConnection,
+) -> Result<ActivateResponse, ActivateError> {
+    use crate::schema::account::dsl::*;
+    let updated_account =
+        diesel::update(account.filter(auth_token.eq(Uuid::parse_str(req_token).unwrap())))
+            .set(status.eq(true))
+            .get_result::<AccountDB>(conn);
+
+    match updated_account {
+        Ok(act) => Ok(ActivateResponse {
+            message: format!("Updated account! {} - {}", act.auth_token, act.email),
+        }),
+        Err(_) => Err(ActivateError),
+    }
+}
+
+pub async fn confirm(path: web::Path<String>, pool: web::Data<DBPool>) -> HttpResponse {
+    let conn = pool.get().expect("Could not connect to DB");
+    let req_token = path.into_inner();
+    let updated_account = web::block(move || activate_account(&req_token, &conn))
+        .await
+        .unwrap();
+    match updated_account {
+        Ok(act) => HttpResponse::Ok().json(act),
+        Err(_) => HttpResponse::BadRequest().finish()
+    }
 }
 
 #[tracing::instrument(name = "Querying and listing subscribers", skip(pool), fields())]
@@ -172,10 +206,9 @@ pub async fn create(
             tracing::error!("Failed to execute insertion {:?}", e);
         });
 
-    // TODO Send confirmation mail
-
     match new_acct {
         Ok(new_acct) => {
+            // TODO Send confirmation mail
             println!("auth token {}", new_acct.as_ref().unwrap().auth_token);
             HttpResponse::Created()
                 .content_type("application/json")
@@ -187,9 +220,5 @@ pub async fn create(
         }
     }
 }
-
-// TODO /CONFIRM/:auth_token ROUTE
-// If Auth Token not paired reject
-// If AuthToken paired, turn status to true / or return "already activated"
 
 // TODO /send newsletter
