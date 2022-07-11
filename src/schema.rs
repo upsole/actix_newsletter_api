@@ -4,6 +4,7 @@ table! {
         subscribed_at -> Timestamp,
         email -> Varchar,
         name -> Varchar,
-        level -> Int4,
+        status -> Bool,
+        auth_token -> Uuid,
     }
 }

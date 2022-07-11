@@ -67,7 +67,6 @@ impl fmt::Display for SanitizedEmail {
 pub struct ParsedAccount {
     pub email: SanitizedEmail,
     pub name: SanitizedName,
-    pub level: i32,
 }
 
 impl ParsedAccount {
@@ -75,7 +74,8 @@ impl ParsedAccount {
         AccountDB {
             email: self.email.to_string(),
             name: self.name.to_string(),
-            level: self.level,
+            status: false,
+            auth_token: Uuid::new_v4(),
             subscribed_at: Utc::now().naive_utc(),
             id: Uuid::new_v4(),
         }

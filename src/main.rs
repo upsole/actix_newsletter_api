@@ -27,8 +27,7 @@ async fn main() -> std::io::Result<()> {
     let pool = Pool::builder()
         .build(manager)
         .expect("Failed to create pool");
-    // TODO TIMEOUT
-    let timeout: std::time::Duration;
+    let timeout = std::time::Duration::from_secs(10);
     let email_client = EmailClient::new(email_api, sender_email, auth_token, timeout);
 
     // Inits subscriber with default level = info. We can change log level by exporting RUST_LOG

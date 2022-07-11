@@ -11,16 +11,16 @@ pub struct EmailClient {
     http_client: Client,
     base_url: String,
     sender: SanitizedEmail,
-    auth_token: Secret<String>,
+    api_token: Secret<String>,
 }
 
 impl EmailClient {
-    pub fn new(base_url: String, sender: SanitizedEmail, auth_token: Secret<String>, timeout: std::time::Duration) -> Self {
+    pub fn new(base_url: String, sender: SanitizedEmail, api_token: Secret<String>, timeout: std::time::Duration) -> Self {
         Self {
             http_client: Client::builder().timeout(timeout).build().expect("Failed to build client."),
             base_url,
             sender,
-            auth_token,
+            api_token,
         }
     }
 
@@ -43,7 +43,7 @@ impl EmailClient {
 
         self.http_client
             .post(&url)
-            .header("X-Postmark-Server-Token", self.auth_token.expose_secret())
+            .header("X-Postmark-Server-Token", self.api_token.expose_secret())
             .json(&request_body)
             .send()
             .await?

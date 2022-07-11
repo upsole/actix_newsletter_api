@@ -5,7 +5,7 @@ use actix_web::{web, HttpResponse};
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{ParseError, ParsedAccount, SanitizedName, SanitizedEmail};
+use crate::domain::{ParseError, ParsedAccount, SanitizedEmail, SanitizedName};
 use crate::schema::account;
 use crate::{DBPool, DBPooledConnection};
 
@@ -40,17 +40,17 @@ pub struct Account {
     pub subscribed_at: DateTime<Utc>,
     pub email: String,
     pub name: String,
-    pub level: i32,
+    pub status: bool,
 }
 
 impl Account {
-    pub fn new(email: String, name: String, level: i32) -> Self {
+    pub fn new(id: String, email: String, name: String, status: bool) -> Self {
         Self {
-            id: Uuid::new_v4().to_string(),
+            id,
             subscribed_at: Utc::now(),
             email,
             name,
-            level,
+            status,
         }
     }
 }
@@ -63,12 +63,18 @@ pub struct AccountDB {
     pub subscribed_at: NaiveDateTime,
     pub email: String,
     pub name: String,
-    pub level: i32,
+    pub status: bool,
+    pub auth_token: Uuid,
 }
 
 impl AccountDB {
     pub fn to_account(&self) -> Account {
-        Account::new(self.email.clone(), self.name.clone(), self.level)
+        Account::new(
+            self.id.to_string(),
+            self.email.clone(),
+            self.name.clone(),
+            self.status,
+        )
     }
 }
 
@@ -76,26 +82,15 @@ impl AccountDB {
 pub struct AccountRequest {
     email: String,
     name: String,
-    level: i32,
 }
 
 impl AccountRequest {
-    pub fn to_account_db(&self) -> AccountDB {
-        AccountDB {
-            email: self.email.clone(),
-            name: self.name.clone(),
-            level: self.level,
-            subscribed_at: Utc::now().naive_utc(),
-            id: Uuid::new_v4(),
-        }
-    }
     pub fn to_parsed_account(&self) -> Result<ParsedAccount, ParseError> {
         let san_name = SanitizedName::parse(self.name.clone())?;
         let san_email = SanitizedEmail::parse(self.email.clone())?;
         Ok(ParsedAccount {
             name: san_name,
             email: san_email,
-            level: self.level
         })
     }
 }
@@ -105,7 +100,10 @@ impl TryFrom<web::Json<AccountRequest>> for ParsedAccount {
     fn try_from(value: web::Json<AccountRequest>) -> Result<Self, Self::Error> {
         let name = SanitizedName::parse(value.name.clone())?;
         let email = SanitizedEmail::parse(value.email.clone())?;
-        Ok(Self {name, email, level: value.level})
+        Ok(Self {
+            name,
+            email,
+        })
     }
 }
 
@@ -126,14 +124,14 @@ fn list_accounts(conn: &DBPooledConnection) -> Result<Accounts, diesel::result::
 fn create_account(
     input_account: ParsedAccount,
     conn: &DBPooledConnection,
-) -> Result<Account, diesel::result::Error> {
+) -> Result<AccountDB, diesel::result::Error> {
     use crate::schema::account::dsl::*;
     let new_account = input_account.to_account_db();
     let _ = diesel::insert_into(account)
         .values(&new_account)
         .execute(conn)
         .expect("Insert failed");
-    Ok(new_account.to_account())
+    Ok(new_account)
 }
 
 #[tracing::instrument(name = "Querying and listing subscribers", skip(pool), fields())]
@@ -174,14 +172,24 @@ pub async fn create(
             tracing::error!("Failed to execute insertion {:?}", e);
         });
 
+    // TODO Send confirmation mail
+
     match new_acct {
-        Ok(new_acct) => HttpResponse::Created()
-            .content_type("application/json")
-            // TODO fix
-            .json(new_acct.unwrap()),
+        Ok(new_acct) => {
+            println!("auth token {}", new_acct.as_ref().unwrap().auth_token);
+            HttpResponse::Created()
+                .content_type("application/json")
+                .json(new_acct.unwrap().to_account())
+        }
         Err(e) => {
             tracing::error!("Failed to execute insertion {:?}", e);
             HttpResponse::InternalServerError().finish()
         }
     }
 }
+
+// TODO /CONFIRM/:auth_token ROUTE
+// If Auth Token not paired reject
+// If AuthToken paired, turn status to true / or return "already activated"
+
+// TODO /send newsletter
