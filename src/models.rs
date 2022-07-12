@@ -1,17 +1,12 @@
-use diesel::prelude::*;
 use diesel::{AsChangeset, Identifiable, Insertable, Queryable};
-
-use actix_web::{web, HttpResponse};
-
+use actix_web::web;
 use serde::{Deserialize, Serialize};
-
-use crate::schema::account;
-
-use crate::domain::{ParseError, ParsedAccount, SanitizedEmail, SanitizedName};
-use crate::{DBPool, DBPooledConnection};
-
 use chrono::{DateTime, NaiveDateTime, Utc};
 use uuid::Uuid;
+
+use crate::schema::account;
+use crate::domain::{ParseError, ParsedAccount, SanitizedEmail, SanitizedName};
+
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Response<T> {
@@ -25,15 +20,6 @@ impl<T> Response<T> {
 }
 
 pub type Accounts = Response<Account>;
-
-pub fn is_valid_name(s: &str) -> bool {
-    let is_empty = s.trim().is_empty();
-    let is_too_long = s.len() > 256;
-    let forbidden_characters = ['/', '(', ')', '"', '<', '>', '\\', '{', '}'];
-    let contains_forbidden_characters = s.chars().any(|c| forbidden_characters.contains(&c));
-
-    !(is_empty || is_too_long || contains_forbidden_characters)
-}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Account {
@@ -81,8 +67,8 @@ impl AccountDB {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AccountRequest {
-    email: String,
-    name: String,
+    pub email: String,
+    pub name: String,
 }
 
 impl AccountRequest {
@@ -104,121 +90,3 @@ impl TryFrom<web::Json<AccountRequest>> for ParsedAccount {
         Ok(Self { name, email })
     }
 }
-
-fn list_accounts(conn: &DBPooledConnection) -> Result<Accounts, diesel::result::Error> {
-    use super::schema::account::dsl::*;
-    let _accounts_query = match account.load::<AccountDB>(conn) {
-        Ok(acts) => acts,
-        Err(_) => vec![],
-    };
-    Ok(Accounts {
-        results: _accounts_query
-            .into_iter()
-            .map(|a| a.to_account())
-            .collect::<Vec<Account>>(),
-    })
-}
-
-fn create_account(
-    input_account: ParsedAccount,
-    conn: &DBPooledConnection,
-) -> Result<AccountDB, diesel::result::Error> {
-    use crate::schema::account::dsl::*;
-    let new_account = input_account.to_account_db();
-    let _ = diesel::insert_into(account)
-        .values(&new_account)
-        .execute(conn)
-        .expect("Insert failed");
-    Ok(new_account)
-}
-
-#[derive(Serialize)]
-struct ActivateResponse {
-    message: String,
-}
-struct ActivateError;
-
-fn activate_account(
-    req_token: &str,
-    conn: &DBPooledConnection,
-) -> Result<ActivateResponse, ActivateError> {
-    use crate::schema::account::dsl::*;
-    let updated_account =
-        diesel::update(account.filter(auth_token.eq(Uuid::parse_str(req_token).unwrap())))
-            .set(status.eq(true))
-            .get_result::<AccountDB>(conn);
-
-    match updated_account {
-        Ok(act) => Ok(ActivateResponse {
-            message: format!("Updated account! {} - {}", act.auth_token, act.email),
-        }),
-        Err(_) => Err(ActivateError),
-    }
-}
-
-pub async fn confirm(path: web::Path<String>, pool: web::Data<DBPool>) -> HttpResponse {
-    let conn = pool.get().expect("Could not connect to DB");
-    let req_token = path.into_inner();
-    let updated_account = web::block(move || activate_account(&req_token, &conn))
-        .await
-        .unwrap();
-    match updated_account {
-        Ok(act) => HttpResponse::Ok().json(act),
-        Err(_) => HttpResponse::BadRequest().finish()
-    }
-}
-
-#[tracing::instrument(name = "Querying and listing subscribers", skip(pool), fields())]
-pub async fn list(pool: web::Data<DBPool>) -> HttpResponse {
-    let conn = pool.get().expect("Could not connect to DB");
-    let accounts = web::block(move || list_accounts(&conn))
-        .await
-        .unwrap()
-        .unwrap();
-
-    HttpResponse::Ok()
-        .content_type("application/json")
-        .json(accounts)
-}
-
-// TODO Error Handling for Already in use email
-#[tracing::instrument(
-    name = "Adding a new subscriber",
-    skip(pool),
-    fields(
-        subscriber_email = %input_account.email,
-        subscriber_name = %input_account.name
-    )
-)]
-pub async fn create(
-    input_account: web::Json<AccountRequest>,
-    pool: web::Data<DBPool>,
-) -> HttpResponse {
-    let parsed_account = match input_account.try_into() {
-        Ok(values) => values,
-        Err(_) => return HttpResponse::BadRequest().finish(),
-    };
-
-    let conn = pool.get().expect("Could not connect to DB");
-    let new_acct = web::block(move || create_account(parsed_account, &conn))
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to execute insertion {:?}", e);
-        });
-
-    match new_acct {
-        Ok(new_acct) => {
-            // TODO Send confirmation mail
-            println!("auth token {}", new_acct.as_ref().unwrap().auth_token);
-            HttpResponse::Created()
-                .content_type("application/json")
-                .json(new_acct.unwrap().to_account())
-        }
-        Err(e) => {
-            tracing::error!("Failed to execute insertion {:?}", e);
-            HttpResponse::InternalServerError().finish()
-        }
-    }
-}
-
-// TODO /send newsletter

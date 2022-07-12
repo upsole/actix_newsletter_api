@@ -3,6 +3,8 @@ use reqwest::Client;
 use secrecy::ExposeSecret;
 use secrecy::Secret;
 
+// TODO REWORK WITH LETTRE & SMTP
+
 #[derive(Debug)]
 pub struct SendError;
 

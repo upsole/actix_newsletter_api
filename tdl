@@ -1,6 +1,0 @@
-HTTP REST CLIENT TO 3rd Party Email Service
-
-extras {
-  metadata 
-  secrecy crate + tests (quickcheck crate)
-}
