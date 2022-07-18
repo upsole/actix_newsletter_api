@@ -1,65 +1,70 @@
-use crate::domain::SanitizedEmail;
-use reqwest::Client;
-use secrecy::ExposeSecret;
-use secrecy::Secret;
-
-// TODO REWORK WITH LETTRE & SMTP
+use crate::domain::{ParsedAccount, SanitizedEmail};
+use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::Error;
+use lettre::{Message, SmtpTransport, Transport};
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct SendError;
 
+#[derive(Debug)]
+pub struct LettreClientError;
+
 #[derive(Clone)]
 pub struct EmailClient {
-    http_client: Client,
-    base_url: String,
+    lettre_transport: SmtpTransport,
     sender: SanitizedEmail,
-    api_token: Secret<String>,
+    username: String,
+    base_url: String,
 }
+
 
 impl EmailClient {
-    pub fn new(base_url: String, sender: SanitizedEmail, api_token: Secret<String>, timeout: std::time::Duration) -> Self {
-        Self {
-            http_client: Client::builder().timeout(timeout).build().expect("Failed to build client."),
-            base_url,
-            sender,
-            api_token,
+    pub fn new(
+        server: String,
+        sender: SanitizedEmail,
+        user: String,
+        password: String,
+        base_url: String,
+    ) -> Result<EmailClient, LettreClientError> {
+        let sasl_credentials = Credentials::new(user.clone(), password);
+        let mailer = SmtpTransport::relay(&server)
+            .expect("Could not connect to SMTP server")
+            .credentials(sasl_credentials)
+            .build();
+        match mailer.test_connection() {
+            Ok(_) => Ok(Self {
+                lettre_transport: mailer,
+                sender,
+                username: user,
+                base_url,
+            }),
+            Err(_) => Err(LettreClientError),
         }
     }
-
-    pub async fn send(
+    pub fn send_confirmation(
         &self,
-        recipient: SanitizedEmail,
-        subject: &str,
-        html_content: &str,
-        text_content: &str,
-    ) -> Result<(), reqwest::Error> {
-        let url = format!("{}/email", self.base_url);
-
-        let request_body = SendEmailRequest {
-            from: self.sender.as_ref(),
-            to: recipient.as_ref(),
-            subject: subject,
-            html_body: html_content,
-            text_body: text_content,
-        };
-
-        self.http_client
-            .post(&url)
-            .header("X-Postmark-Server-Token", self.api_token.expose_secret())
-            .json(&request_body)
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok(())
+        recipient: ParsedAccount,
+        auth_token: Uuid,
+    ) -> Result<(), Error> {
+        let email = Message::builder()
+            .from(
+                format!("{} <{}>", self.username, self.sender)
+                    .parse()
+                    .expect("Could not parse sender user - <email>"),
+            )
+            .to(format!("{} <{}>", recipient.name, recipient.email)
+                .parse()
+                .expect("Could not parse recipient user - <email>"))
+            .subject("Confirm your subscription to upsol.me")
+            .body(format!(
+                "Hello {},\nClick here to confirm your account\n\n {}/confirm/{}",
+                recipient.name, self.base_url, auth_token
+            ))
+            .expect("Error building the email");
+        match self.lettre_transport.send(&email) {
+            Ok(_) => Ok(tracing::info!("Confirmation mail sent")),
+            Err(e) => Err(e),
+        }
     }
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "PascalCase")]
-struct SendEmailRequest<'a> {
-    from: &'a str,
-    to: &'a str,
-    subject: &'a str,
-    html_body: &'a str,
-    text_body: &'a str,
 }

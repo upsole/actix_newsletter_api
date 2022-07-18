@@ -5,6 +5,7 @@ use validator::validate_email;
 
 use std::fmt;
 
+#[derive(Clone)]
 pub struct SanitizedName(String);
 #[derive(Debug)]
 pub struct ParseError;
@@ -30,7 +31,7 @@ impl fmt::Display for SanitizedName {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SanitizedEmail(String);
 
 impl AsRef<str> for SanitizedEmail {
@@ -45,7 +46,6 @@ impl SanitizedEmail {
         let is_too_long = s.len() > 256;
         let forbidden_characters = ['/', '(', ')', '"', '<', '>', '\\', '{', '}'];
         let contains_forbidden_characters = s.chars().any(|c| forbidden_characters.contains(&c));
-        // TODO Regex email validation
 
         if is_empty || is_too_long || contains_forbidden_characters ||!validate_email(&s) {
             return Err(ParseError)
@@ -62,6 +62,7 @@ impl fmt::Display for SanitizedEmail {
     }
 }
 
+#[derive(Clone)]
 pub struct ParsedAccount {
     pub email: SanitizedEmail,
     pub name: SanitizedName,

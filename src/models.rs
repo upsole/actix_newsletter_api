@@ -42,7 +42,6 @@ impl Account {
     }
 }
 
-// TODO BUG
 #[derive(Deserialize, Queryable, Insertable, Identifiable, AsChangeset)]
 #[table_name = "account"]
 pub struct AccountDB {

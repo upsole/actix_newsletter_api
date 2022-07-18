@@ -1,5 +1,10 @@
 #!/bin/bash
-docker-compose up -d &&
-echo "Waiting for Postgres" && sleep 10 &&
-diesel setup &&
-diesel migration run
+POSTGRES_READY=1
+docker-compose up -d && while [ $POSTGRES_READY -eq 1 ]
+do 
+  echo "Checking on Postgres"
+  docker-compose exec db pg_isready && POSTGRES_READY=0 && break
+  sleep 2
+done
+echo "Calling diesel"
+diesel setup && echo "All done"

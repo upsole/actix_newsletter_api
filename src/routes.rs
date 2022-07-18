@@ -1,14 +1,15 @@
-use diesel::prelude::*;
-use uuid::Uuid;
 use actix_web::{web, HttpResponse};
+use diesel::prelude::*;
 use serde::Serialize;
+use uuid::Uuid;
 
-use crate::domain::{ParsedAccount};
+use crate::domain::ParsedAccount;
+use crate::email::EmailClient;
 use crate::{DBPool, DBPooledConnection};
 
-use crate::models::{Accounts, Account, AccountDB,  AccountRequest};
+use crate::models::{Account, AccountDB, AccountRequest, Accounts};
 
-// GET /subscriptions 
+// GET /subscriptions
 // TODO needs auth
 #[tracing::instrument(name = "Querying and listing subscribers", skip(pool), fields())]
 pub async fn list(pool: web::Data<DBPool>) -> HttpResponse {
@@ -37,7 +38,7 @@ fn list_accounts(conn: &DBPooledConnection) -> Result<Accounts, diesel::result::
     })
 }
 
-// POST subscriptions 
+// POST subscriptions
 // Creates acct
 fn create_account(
     input_account: ParsedAccount,
@@ -51,10 +52,11 @@ fn create_account(
         .expect("Insert failed");
     Ok(new_account)
 }
+
 // TODO Error Handling for Already in use email
 #[tracing::instrument(
     name = "Adding a new subscriber",
-    skip(pool),
+    skip(pool, email_client),
     fields(
         subscriber_email = %input_account.email,
         subscriber_name = %input_account.name
@@ -63,11 +65,14 @@ fn create_account(
 pub async fn create(
     input_account: web::Json<AccountRequest>,
     pool: web::Data<DBPool>,
+    email_client: web::Data<EmailClient>,
 ) -> HttpResponse {
-    let parsed_account = match input_account.try_into() {
+    let parsed_account: ParsedAccount = match input_account.try_into() {
         Ok(values) => values,
         Err(_) => return HttpResponse::BadRequest().finish(),
     };
+
+    let clone_acct = parsed_account.clone();
 
     let conn = pool.get().expect("Could not connect to DB");
     let new_acct = web::block(move || create_account(parsed_account, &conn))
@@ -78,11 +83,13 @@ pub async fn create(
 
     match new_acct {
         Ok(new_acct) => {
-            // TODO Send confirmation mail
-            println!("auth token {}", new_acct.as_ref().unwrap().auth_token);
-            HttpResponse::Created()
-                .content_type("application/json")
-                .json(new_acct.unwrap().to_account())
+            match email_client.send_confirmation(clone_acct, new_acct.as_ref().unwrap().auth_token)
+            {
+                Ok(_) => HttpResponse::Created()
+                    .content_type("application/json")
+                    .json(new_acct.unwrap().to_account()),
+                Err(_) => HttpResponse::InternalServerError().finish()
+            }
         }
         Err(e) => {
             tracing::error!("Failed to execute insertion {:?}", e);
@@ -92,7 +99,7 @@ pub async fn create(
 }
 
 // POST /confirm/{req_token}
-// Activates account 
+// Activates account
 #[derive(Serialize)]
 struct ActivateResponse {
     message: String,
@@ -110,7 +117,7 @@ fn activate_account(
 
     match updated_account {
         Ok(act) => Ok(ActivateResponse {
-            message: format!("Updated account! {} - {}", act.auth_token, act.email),
+            message: format!("Confirmed email account! {}", act.email),
         }),
         Err(_) => Err(ActivateError),
     }
@@ -127,27 +134,5 @@ pub async fn confirm(path: web::Path<String>, pool: web::Data<DBPool>) -> HttpRe
         Err(_) => HttpResponse::BadRequest().finish(),
     }
 }
-
-
-
-// TODO this is a test route
-// pub async fn send_email(client: web::Data<EmailClient>) -> HttpResponse {
-//     let html_content = "<p> This is the test email html. </p>";
-//     let text_content = "Hi this a test email";
-//
-//     let res = client
-//         .send(
-//             SanitizedEmail::parse("upsol@protonmail.com".to_string()).unwrap(),
-//             "Confirmation email",
-//             html_content,
-//             text_content,
-//         )
-//         .await
-//         .map_err(|e| {
-//             tracing::error!("{}", e);
-//             return HttpResponse::InternalServerError().finish()
-//         });
-//     HttpResponse::Ok().finish()
-// }
 
 // TODO /send newsletter
